@@ -9,3 +9,5 @@ void *mem_heap_hi(void);
 size_t mem_heapsize(void);
 size_t mem_pagesize(void);
 
+// void *extend_heap(size_t words);
+// void *coalesce(void *bp);
