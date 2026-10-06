@@ -206,19 +206,26 @@ void *mm_malloc(size_t size)
 static void *find_fit(size_t asize)
 {
     void *bp = explicit_listp;
+    void *best = NULL;
+    size_t best_size = (size_t)-1;
+
     while (bp != NULL)
     {
+        size_t block_size = GET_SIZE(HDRP(bp));
 
-        if (GET_SIZE(HDRP(bp)) >= asize)
+        if (block_size >= asize && block_size < best_size)
         {
-            // pop(bp);
-            return bp;
+            best = bp;
+            best_size = block_size;
+
+            if (block_size == asize)
+                break;
         }
 
         bp = FREE_NEXT_BLKP(bp);
     }
 
-    return NULL;
+    return best;
 }
 
 static void place(void *bp, size_t asize)
@@ -363,9 +370,8 @@ static void *coalesce(void *bp)
 void *mm_realloc(void *ptr, size_t size) // 현재는 요구 size만큼을 새로 할당하여 배치함.
 {
     if (ptr == NULL)
-    {
         return mm_malloc(size);
-    }
+
     else if (size == 0)
     {
         mm_free(ptr);
@@ -405,91 +411,134 @@ void *mm_realloc(void *ptr, size_t size) // 현재는 요구 size만큼을 새�
         size_t next_block_size = GET_SIZE(HDRP(NEXT_BLKP(ptr)));
         size_t merged_right_block_size = old_block_size + next_block_size; // 다음 블록 더한 크기
 
-        // if (GET_SIZE(HDRP(NEXT_BLKP(ptr))) == 0) // 다음 블록이 에필로그임
-        // {
-        //     char *bp = find_fit(new_block_size); // 적당한 공간이 있으면 집어넣기
-        //     if (bp)
-        //         goto basecase;
-        //     else // 적당한 공간이 없으면 확장 후 할당.
-        //     {
-        //         size_t extendsize = new_block_size - old_block_size;
-        //         if((bp = extend_heap(extendsize / WSIZE)) == NULL)
-        //             return NULL;
-        //         else
-        //             goto merge_right;
-        //     }
-        // }
-        if (!prev_alloc && next_alloc) // 이전 블록만 가용임
-        {
-            goto merge_left;
-        }
-        else if(prev_alloc && !next_alloc) // 다음 블록만 가용임
+        if(!next_alloc && merged_right_block_size >= new_block_size) // 다음 블록만 가용임          
             goto merge_right;
+            
+        else if (!prev_alloc && merged_left_block_size >= new_block_size) // 이전 블록만 가용임         
+            goto merge_left;
+            
+        else if(!prev_alloc && !next_alloc && 
+            (prev_block_size + old_block_size + next_block_size >= new_block_size)) 
+            
+            goto merge_both;
 
-        else if(!prev_alloc && !next_alloc) // 둘 다 가용임 -> 그럼 어디로 합쳐? 생각해야함
-        {
+        else if ( find_fit(new_block_size) != NULL )
+            goto basecase;          
 
-        }
-        else if(prev_alloc && next_alloc) // 앞뒤 꽉차서 어차피 못써
-            goto basecase;
-
-        
-        if (GET_ALLOC(HDRP(NEXT_BLKP(ptr))) == 1) // 다음 블록이 할당 상태임
-            goto basecase;
-        
+        else 
+            goto heap_extend;
+        // else if ( find_fit(new_block_size) != NULL )
+        //     goto basecase;
 merge_left:
-        if (merged_left_block_size >= new_block_size)
+        void *temp = PREV_BLKP(ptr);
+        pop(PREV_BLKP(ptr));
+
+        memmove(temp, ptr, old_payload_size);
+    
+        if(merged_left_block_size - new_block_size < 3 * DSIZE)
         {
-            void *temp = PREV_BLKP(ptr);
-            pop(PREV_BLKP(ptr));
+            PUT(HDRP(temp), PACK(merged_left_block_size, 1));
+            PUT(FTRP(temp), PACK(merged_left_block_size, 1));
+            return temp;
+        }
+        else
+        {
+            PUT(HDRP(temp), PACK(new_block_size, 1));
+            PUT(FTRP(temp), PACK(new_block_size, 1));
 
-            memmove(temp, ptr, old_payload_size);
-     
-            if(merged_left_block_size - new_block_size < 3 * DSIZE)
-            {
-                PUT(HDRP(PREV_BLKP(ptr)), PACK(merged_left_block_size, 1));
-                PUT(FTRP(PREV_BLKP(ptr)), PACK(merged_left_block_size, 1));
-                return temp;
-            }
-            else
-            {
-                PUT(HDRP(temp), PACK(new_block_size, 1));
-                PUT(FTRP(temp), PACK(new_block_size, 1));
+            void *newblock = NEXT_BLKP(temp);
+            PUT(HDRP(newblock), PACK(merged_left_block_size - new_block_size, 0));
+            PUT(FTRP(newblock), PACK(merged_left_block_size - new_block_size, 0));
 
-                void *newblock = NEXT_BLKP(temp);
-                PUT(HDRP(newblock), PACK(merged_left_block_size - new_block_size, 0));
-                PUT(FTRP(newblock), PACK(merged_left_block_size - new_block_size, 0));
-
-                push(newblock);
-                return temp;
-            }
+            push(newblock);
+            return temp;
         }
 
 merge_right:
-        if (merged_right_block_size >= new_block_size) // 뒷 블록 크기 더한 값이 할당 크기 충족할 때
+        pop(NEXT_BLKP(ptr)); // 뒷 블록 pop
+        /* 두 블록 병합 */
+        PUT(HDRP(ptr), PACK(merged_right_block_size, 1));
+        PUT(FTRP(ptr), PACK(merged_right_block_size, 1));
+
+        if (merged_right_block_size - new_block_size < 3 * DSIZE) // 합병 후 분할 불가
         {
-            pop(NEXT_BLKP(ptr)); // 뒷 블록 pop
-            /* 두 블록 병합 */
-            PUT(HDRP(ptr), PACK(merged_right_block_size, 1));
-            PUT(FTRP(ptr), PACK(merged_right_block_size, 1));
-
-            if (merged_right_block_size - new_block_size < 3 * DSIZE) // 합병 후 분할 불가
-            {
-                return ptr;
-            }
-            else // 합병 후 분할 가능
-            {
-                PUT(HDRP(ptr), PACK(new_block_size, 1));
-                PUT(FTRP(ptr), PACK(new_block_size, 1));
-
-                void *newblock = NEXT_BLKP(ptr);
-                PUT(HDRP(newblock), PACK(merged_right_block_size - new_block_size, 0));
-                PUT(FTRP(newblock), PACK(merged_right_block_size - new_block_size, 0));
-                push(newblock);
-                return ptr;
-            }
+            return ptr;
         }
-basecase: // 가용한 공간 어딘가 있는 경우
+        else // 합병 후 분할 가능
+        {
+            PUT(HDRP(ptr), PACK(new_block_size, 1));
+            PUT(FTRP(ptr), PACK(new_block_size, 1));
+
+            void *newblock = NEXT_BLKP(ptr);
+            PUT(HDRP(newblock), PACK(merged_right_block_size - new_block_size, 0));
+            PUT(FTRP(newblock), PACK(merged_right_block_size - new_block_size, 0));
+            push(newblock);
+            return ptr;
+        }
+merge_both:
+        void *prev_bp = PREV_BLKP(ptr);
+        void *next_bp = NEXT_BLKP(ptr);
+
+        size_t total_size = prev_block_size + old_block_size + next_block_size;
+        size_t remainder = total_size - new_block_size;
+
+        pop(prev_bp);
+        pop(next_bp);
+
+        memmove(prev_bp, ptr, old_payload_size);
+
+        if (remainder < 3 * DSIZE)
+        {
+            PUT(HDRP(prev_bp), PACK(total_size, 1));
+            PUT(FTRP(prev_bp), PACK(total_size, 1));
+            return prev_bp;
+        }
+        else
+        {
+            PUT(HDRP(prev_bp), PACK(new_block_size, 1));
+            PUT(FTRP(prev_bp), PACK(new_block_size, 1));
+
+            void *newblock = NEXT_BLKP(prev_bp);
+            PUT(HDRP(newblock), PACK(remainder, 0));
+            PUT(FTRP(newblock), PACK(remainder, 0));
+            push(newblock);
+
+            return prev_bp;
+        }
+
+heap_extend:
+        void *next_bpp = NEXT_BLKP(ptr);
+        int is_next_epilogue = (GET_SIZE(HDRP(next_bpp)) == 0);
+        int is_next_free_reaches_epliogue = 
+            !is_next_epilogue &&
+            !GET_ALLOC(HDRP(next_bpp)) && 
+            GET_SIZE(HDRP(NEXT_BLKP(next_bpp))) == 0;
+
+        int is_area_reaches_epliogue = (is_next_epilogue || is_next_free_reaches_epliogue);
+        if (!is_area_reaches_epliogue)
+            goto basecase;
+
+        size_t total_sizee = old_block_size;
+        if (!prev_alloc)
+            total_sizee += prev_block_size;
+        if (is_next_free_reaches_epliogue)
+            total_sizee += next_block_size;
+        /* 이거 해도 total_size < new_block_size 임. 앞에서 다 처리됨 */
+        
+        size_t area_needed = new_block_size - total_sizee;
+        size_t extendsize = MAX(area_needed, 3 * DSIZE);
+        if( extend_heap(extendsize / WSIZE) == NULL)
+            return NULL;
+
+        next_block_size = GET_SIZE(HDRP(NEXT_BLKP(ptr)));
+        merged_right_block_size = old_block_size + next_block_size;
+
+        if(!prev_alloc)
+            goto merge_both;
+        else
+            goto merge_right;
+         
+basecase: // 가용한 공간이 어딘가 있는 경우
         if ((newptr = mm_malloc(size)) != NULL) 
         {
             memcpy(newptr, ptr, old_payload_size);
