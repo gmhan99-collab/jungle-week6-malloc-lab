@@ -378,7 +378,6 @@ void *mm_realloc(void *ptr, size_t size) // 현재는 요구 size만큼을 새�
         return NULL;
     }
     
-    void *newptr;
     size_t old_block_size = GET_SIZE(HDRP(ptr)); // 기존 블록 사이즈
     size_t old_payload_size = old_block_size - 2 * WSIZE; // 기존 payload 사이즈
     size_t new_block_size = MAX(3 * DSIZE, ALIGN(size + 2 * WSIZE)); // 요청 크기 = payload 를 8바이트 정렬
@@ -427,8 +426,9 @@ void *mm_realloc(void *ptr, size_t size) // 현재는 요구 size만큼을 새�
 
         else 
             goto heap_extend;
-        // else if ( find_fit(new_block_size) != NULL )
-        //     goto basecase;
+
+        goto basecase;
+
 merge_left:
         void *temp = PREV_BLKP(ptr);
         pop(PREV_BLKP(ptr));
@@ -539,6 +539,7 @@ heap_extend:
             goto merge_right;
          
 basecase: // 가용한 공간이 어딘가 있는 경우
+        void *newptr;
         if ((newptr = mm_malloc(size)) != NULL) 
         {
             memcpy(newptr, ptr, old_payload_size);
