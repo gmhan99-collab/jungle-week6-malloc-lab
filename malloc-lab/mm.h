@@ -7,7 +7,7 @@ extern void *mm_realloc(void *ptr, size_t size);
 
 #define WSIZE 4 /* Word and header/footer size (bytes) */
 #define DSIZE 8 /* Double Word size (bytes) */
-#define CHUNKSIZE (1<<12)   /* Extend heap by this amount (bytes) */
+#define CHUNKSIZE (24)   /* Extend heap by this amount (bytes) */
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define MIN(x, y) ((x) > (y) ? (y) : (x))
